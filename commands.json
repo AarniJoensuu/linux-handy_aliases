@@ -1,0 +1,14 @@
+{
+  "commands": [
+    {
+      "name": "Get quote",
+      "alias": "get_quote",
+      "executable": "get_quote",
+      "instructions": "Type 'get_quote' to fetch a random quote",
+      "compilation_libraries": [
+        "-ljsoncpp"
+      ],
+      "enabled": true
+    }
+  ]
+}
