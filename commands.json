@@ -4,9 +4,11 @@
       "name": "Get quote",
       "alias": "get_quote",
       "executable": "get_quote",
+      "source_file": "get_quote.cpp",
       "instructions": "Type 'get_quote' to fetch a random quote",
       "compilation_libraries": [
-        "-ljsoncpp"
+        "ljsoncpp",
+        "lcurl"
       ],
       "enabled": true
     }

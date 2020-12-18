@@ -208,7 +208,7 @@ bool check_executables_dir(std::string executables_dir_name)
   /* Create directory if it does not exist. */
   if (!dir_exists)
   {
-    int is_fail = mkdir(executables_dir_name.c_str(), 0666);
+    int is_fail = mkdir(executables_dir_name.c_str(), 0667);
     if (!is_fail)
     {
       std::cout << "Created executables directoty." << std::endl;
@@ -237,9 +237,8 @@ std::string read_file_to_string(const std::string &file_name)
 
 std::string insert_lines(
   std::string contents,
-  std::string quote,
-  std::string command
-)
+  std::string alias,
+  std::string command)
 /* Function takes a string representing the contents
  * of a file and replaces or insert lines depending
  * on whether corresponding command lines already
@@ -248,26 +247,32 @@ std::string insert_lines(
   std::istringstream text(contents);
   std::string line;
   
-  std::string line_start_comparison = "alias " + quote;
-  bool quote_already_exists = false;
+  std::string line_start_comparison = "alias " + alias;
   std::string new_line;
 
   std::string return_str;
 
+  bool command_inserted = false;
   while (std::getline(text, line))
   {
     if (line.rfind(line_start_comparison, 0) == 0)
     {
-      quote_already_exists = true;
-      std::string replacement_str = "alias " + quote + "=" + command + "\n";
+      std::string replacement_str = "alias " + alias + "=" + command + "\n";
       return_str += replacement_str;
+      command_inserted = true;
     }
     else
     {
-      return_str += line;
+      std::string line_with_newline = line + "\n";
+      return_str += line_with_newline;
     }
   }
-  std::cout << return_str << std::endl;
+
+  if (!command_inserted)
+  {
+    std::string insert_line = "alias " + alias + "=" + command + "\n";
+    return_str += insert_line;
+  }
   return return_str;
 }
 
@@ -283,7 +288,8 @@ std::string get_current_dir(void)
 
 std::string form_command(
   std::string alias,
-  std::string executables_dir)
+  std::string executables_dir,
+  std::string executable_name)
 /* Function creates a string representing
  * a full alias file line and return it. */
 {
@@ -298,8 +304,7 @@ std::string form_command(
     executables_dir.erase(0, 1);
   }
 
-  std::string full_alias_line = "alias " + alias +
-    "=" + "'" + current_dir + "/" + executables_dir + "/" + alias + "'\n";
+  std::string full_alias_line = "'" + current_dir + "/" + executables_dir + "/" + executable_name + "'\n";
   
   return full_alias_line;
 }
@@ -318,11 +323,77 @@ std::string strip_quotation_marks(std::string str)
   return str;
 }
 
-void loop_through_commands(
+std::string prefix_join(
+  std::string compilation_libraries[],
+  int lib_count)
+/* Function takes an array of libraries as parameter and
+ * joins + prefixes them into one string which is returned. */
+{
+  const std::string prefix = " -";
+  std::string libraries_str = "";
+
+  for (int i = 0; i != lib_count; ++i)
+  {
+    std::string library_addon = prefix + strip_quotation_marks(strip_newline(compilation_libraries[i]));
+    libraries_str += library_addon;
+  }
+  return libraries_str;
+}
+
+void compile_from_source(
+  std::string source_file,
+  std::string executables_dir_name,
+  std::string executable_name,
+  std::string libraries[] = NULL,
+  int libraries_count = 0)
+/* Function generates a Linux shell-compatible
+ * string which compiles source files, and then
+ * executes that string, resulting in source
+ * file compilation. */
+{
+  /* Set compiler and source directory
+   * for .cpp files. */
+  std::string compiler = "g++";
+  std::string source_directory = "./src/";
+
+  /* Add external libraries to compilation
+   * command in case any exist. */
+  std::string libraries_str = "";
+  if (libraries_count)
+  {
+    libraries_str = prefix_join(libraries, libraries_count);
+  }
+
+  /* Form the compilation commands string. */
+  std::string compilation_command = compiler + " -o " +
+  "./" + executables_dir_name + "/" + executable_name +
+  " " + source_directory + source_file + libraries_str;
+  std::cout << "Compiling " << source_file << " ...";
+  
+  /* Try compiling. There are many things
+   * here that can go wrong, e.g. no permissions
+   * on executables directory or no required
+   * libraries installed. Inform errors to stdout. */
+  try
+  {
+    std::system(compilation_command.c_str());
+    std::cout << " done." << std::endl;
+  }
+  
+  catch(const std::exception &exc)
+  {
+    std::cerr << exc.what();
+  }
+}
+
+std::string loop_through_commands(
   std::string command_file_name,
   std::string alias_file_name,
   std::string executables_dir_name)
-/*  */
+/* Function loops through the commands in commands
+ * configuration file, and compiles executables &
+ * adds aliases to alias file according to the paths
+ * of the newly created executables. */
 {
   /* Read command JSON file into a variable. */
   Json::Value commands_contents;
@@ -330,6 +401,7 @@ void loop_through_commands(
   std::ifstream commands_file(command_file_name, std::ifstream::binary);
   commands_file >> commands_contents;
   Json::Value commands_array = commands_contents["commands"];
+  
   if (commands_file.is_open())
   {
     commands_file.close();
@@ -338,17 +410,54 @@ void loop_through_commands(
   /* Read alias file contents into a string. */
   std::string alias_file_as_string = read_file_to_string(alias_file_name);
 
+  /* Loop through commands in commands json structure. */
   for (Json::Value::ArrayIndex i = 0; i != commands_array.size(); ++i)
   {
     Json::Value command = commands_array[i];
     Json::Value enabled = strip_newline(fastWriter.write(command["enabled"]));
-    if (enabled == "true" || enabled == "true\n")
+
+    /* Only process enabled commands. */
+    if (enabled == "true")
     {
-      bool alias_already_exists = false;
       std::string alias = strip_quotation_marks(strip_newline(fastWriter.write(command["alias"])));
-      std::string command_str = form_command(alias, executables_dir_name);
+      std::string result_executable = strip_quotation_marks(strip_newline(fastWriter.write(command["executable"])));
+      std::string command_str = form_command(alias, executables_dir_name, result_executable);
+      alias_file_as_string = insert_lines(alias_file_as_string, alias, command_str);
+      std::string source_file_name = strip_quotation_marks(strip_newline(fastWriter.write(command["source_file"])));
       
+      /* If external libraries are required for compilation,
+       * provide their names to compilation function. */
+      if (command.isMember("compilation_libraries"))
+      {
+        int library_count = command["compilation_libraries"].size();
+        std::string compilation_libraries[library_count];
+        for (int i = 0; i != library_count; ++i)
+        {
+          compilation_libraries[i] = fastWriter.write(command["compilation_libraries"][i]);
+        }
+        compile_from_source(source_file_name, executables_dir_name, result_executable, compilation_libraries, library_count);
+      }
+
+      /* This else-clause fires in case no external libraries are required for compilation. */
+      else
+      {
+        compile_from_source(source_file_name, executables_dir_name, result_executable);
+      }
     }
+  }
+  return alias_file_as_string;
+}
+
+void rewrite_alias_file(
+  std::string alias_file_path,
+  std::string alias_file_content)
+/* Function (re)writes an alias file with given content. */
+{
+  std::ofstream open_file(alias_file_path, std::ofstream::trunc);
+  if (open_file.is_open())
+  {
+    open_file << alias_file_content;
+    open_file.close();
   }
 }
 
@@ -379,8 +488,11 @@ int main(void)
     return 1;
   }
 
-  /*  */
-  loop_through_commands(command_file, alias_file, executables_dir);
+  /* Perform source file compilation and retrieve new alias file content. */
+  std::string alias_file_as_string = loop_through_commands(command_file, alias_file, executables_dir);
+
+  /* Finally make a new alias file. */
+  rewrite_alias_file(alias_file, alias_file_as_string);
 
   return 0;
 }
